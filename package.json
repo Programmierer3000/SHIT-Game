@@ -1,0 +1,19 @@
+{
+  "name": "shit-game",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SHIT Meeting - Would you rather voting game",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "build": "node scripts/gen-config.js",
+    "test": "node server/scoring.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}

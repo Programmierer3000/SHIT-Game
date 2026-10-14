@@ -1,0 +1,14 @@
+[
+  { "a": "Breathe under water", "b": "Fly", "emojiA": "🌊", "emojiB": "🕊️" },
+  { "a": "A penguin who holds your hand while you are in an elevator", "b": "An owl you can call once a week who answers one question", "emojiA": "🐧", "emojiB": "🦉" },
+  { "a": "A flamingo that dramatically faints every time you exaggerate a story", "b": "A sheep wearing a propeller helmet that stands next to you in every serious moment", "emojiA": "🦩", "emojiB": "🐑" },
+  { "a": "A lizard that remembers all your passwords", "b": "A raccoon that brings you a mystery object every day", "emojiA": "🦎", "emojiB": "🦝" },
+  { "a": "A penguin that cools the air around you when it's hot", "b": "A camel that brings you lemonade when you're thirsty", "emojiA": "🐧", "emojiB": "🐫" },
+  { "a": "A tiny Shrek living in your pocket that sings “Party in the USA” every time you open a door", "b": "10 Minions that follow you everywhere but are completely useless", "emojiA": "🧌", "emojiB": "🍌" },
+  { "a": "Gather the full knowledge of any book by touching it", "b": "Morph into any person at will and adopt their athletic ability", "emojiA": "📚", "emojiB": "🎭" },
+  { "a": "Every time you sneeze, a random song plays from your body for 50 seconds", "b": "Once a day gravity stops affecting you and you float around for 50 seconds", "emojiA": "🤧", "emojiB": "🎈" },
+  { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
+  { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
+  { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
+  { "a": "Animal A", "b": "Animal B", "emojiA": "🐻", "emojiB": "🐍", "hint": "You are in a flat landscape without trees. You are being followed by one of these animals which wants to kill you. Which one are you choosing?" }
+]

@@ -28,7 +28,6 @@
 
   socket.on('connect', resume);
   socket.on('kicked', () => { alert('You were removed from the game.'); leave(); });
-  socket.on('closed', () => { if (session && session.role !== 'host') alert('The host closed the game.'); leave(); });
   socket.on('state', (s) => {
     if (!session) return;
     state = s;
@@ -82,7 +81,7 @@
     if (!session) return renderLanding();
     landingBuilt = false;
     if (!state) { app.innerHTML = logo + '<p class="center muted">Connecting…</p>'; return; }
-    if (session.role === 'host') renderHost(); else renderPlayer();
+    renderPlayer();
   }
 
   function renderLanding() {
@@ -97,6 +96,7 @@
         <button class="btn" id="join">Join</button></div>
       <div class="panel"><h2>👑 Host a game</h2>
         <p class="err" id="e2"></p>
+        <input id="hname" maxlength="20" placeholder="Your name (you play too)" autocomplete="off">
         <input id="pw" type="password" placeholder="Host password" autocomplete="off">
         <button class="btn gold" id="create">Create game</button>
         <p class="muted small">You get a code that players enter to join.</p></div></div>`;
@@ -110,7 +110,7 @@
       });
     };
     const create = () => {
-      socket.emit('host:create', $('#pw').value, (r) => {
+      socket.emit('host:create', { password: $('#pw').value, name: $('#hname').value.trim() }, (r) => {
         if (r.error) { $('#e2').textContent = r.error; return; }
         save({ role: 'host', code: r.code, hostToken: r.hostToken });
       });
@@ -125,27 +125,45 @@
   function renderPlayer() {
     const me = state.me;
     if (!me) { app.innerHTML = logo + '<p class="center muted">Joining…</p>'; return; }
+    const isHost = state.role === 'host';
     const q = state.question;
-    const me_ = `<span class="chip gold">${esc(me.name)} · ${me.score}/${state.maxPoints}</span>`;
+    const me_ = `<span class="chip gold">${isHost ? '👑 ' : ''}${esc(me.name)} · ${me.score}/${state.maxPoints}</span>`;
     let html = logo + statusBar(me_);
 
     if (state.phase === 'lobby') {
-      html += `<div class="panel center"><h2>You're in! 🎉</h2><p class="muted">Waiting for the host to start…</p>
-        <p>${state.playerCount} player(s) in the lobby</p></div>`;
+      if (isHost) {
+        html += `<div class="panel codebox"><div class="lbl">JOIN WITH CODE</div><div class="big">${esc(state.code)}</div>
+          <p class="muted small" style="margin:0 0 14px">Players open this site and enter the code, or use the link:</p>
+          <button class="btn ghost sm" id="copy">📋 Copy invite link</button></div>
+          <div class="panel"><h2>Players (${state.playerCount})</h2>${playersHtml()}</div>
+          <button class="btn gold" id="next" ${state.playerCount > 1 ? '' : 'disabled'}>${state.playerCount > 1 ? '▶ Start game' : 'Waiting for players…'}</button>`;
+      } else {
+        html += `<div class="panel center"><h2>You're in! 🎉</h2><p class="muted">Waiting for the host to start…</p>
+          <p>${state.playerCount} player(s) in the lobby</p></div>`;
+      }
     } else if (state.phase === 'voting' || state.phase === 'closed') {
-      const open = state.phase === 'voting';
+      const open = state.phase === 'voting' || isHost;
       const saved = me.vote;
       const pick = draft || saved || {};
       if (q.hint) html += `<p class="hint">${esc(q.hint)}</p>`;
       html += '<div class="timer" id="timer"></div><div class="bar"><div id="bar"></div></div>';
-      [['own', '1', 'Your own choice'], ['majority', '2', 'The majority’s choice'], ['host', '3', 'The host’s choice']].forEach(([k, n, label], i) => {
+      const steps = isHost
+        ? [['own', '1', 'Your choice – everybody guesses this'], ['majority', '2', 'The majority’s choice']]
+        : [['own', '1', 'Your own choice'], ['majority', '2', 'The majority’s choice'], ['host', '3', 'The host’s choice']];
+      const keys = steps.map((s) => s[0]);
+      steps.forEach(([k, n, label], i) => {
         html += `<div class="step ${i ? 'compact' : ''}" data-k="${k}"><h3><b>${n}</b>${label}</h3><div class="opts">
           ${['A', 'B'].map((s) => optHtml(q, s, pick[k] === s ? 'sel' : '')).join('')}</div></div>`;
       });
-      const ready = pick.own && pick.majority && pick.host;
-      const changed = !saved || !draft || ['own', 'majority', 'host'].some((k) => saved[k] !== draft[k]);
+      const ready = keys.every((k) => pick[k]);
+      const changed = !saved || !draft || keys.some((k) => saved[k] !== draft[k]);
       html += `<button class="btn" id="send" ${open && ready && changed ? '' : 'disabled'}>${saved ? 'Update vote' : 'Submit vote'}</button>
-        <p class="center muted small" style="margin-top:12px">${!open ? '⏱ Voting closed' : saved ? '✅ Vote saved – you can still change it' : 'Pick all three, then submit'}</p>`;
+        <p class="center muted small" style="margin-top:12px">${!open ? '⏱ Voting closed' : saved ? '✅ Vote saved – you can still change it' : `Pick ${keys.length === 2 ? 'both' : 'all three'}, then submit`}</p>`;
+      if (isHost) {
+        html += `<div class="panel"><p class="center muted" style="margin-top:0">${state.votedCount} / ${state.playerCount} voted${state.phase === 'closed' ? ' · time is up' : ''}</p>
+          <button class="btn gold" id="reveal" ${state.hostChoice ? '' : 'disabled'}>${state.hostChoice ? 'Reveal result' : 'Submit your own vote first'}</button></div>
+          <div class="panel"><h2>Players</h2>${playersHtml(true)}</div>`;
+      }
     } else if (state.phase === 'reveal') {
       const l = me.last;
       html += resultHtml();
@@ -157,16 +175,17 @@
         html += '<div class="panel center muted">You did not vote this round.</div>';
       }
       html += `<div class="panel"><h2>Leaderboard · you are #${me.rank}</h2>${boardHtml(me.id, 10)}</div>`;
+      if (isHost) html += `<button class="btn gold" id="next">${state.nextAvailable ? 'Next question ▶' : 'Show final ranking 🏆'}</button>`;
     } else {
       html += `<div class="panel"><h2 class="center">🏆 Final ranking</h2>${podiumHtml()}${boardHtml(me.id)}</div>
         <p class="center">${me.score >= state.maxPoints ? '🎁 You reached 70 points – pick up your gift!' : 'Applause for the winner! 👏'}</p>`;
     }
-    html += '<div class="footer"><button id="leave">Leave game</button></div>';
+    if (!isHost) html += '<div class="footer"><button id="leave">Leave game</button></div>';
     app.innerHTML = html;
 
     app.querySelectorAll('.step .opt').forEach((b) => {
       b.onclick = () => {
-        if (state.phase !== 'voting') return;
+        if (state.phase !== 'voting' && !(isHost && state.phase === 'closed')) return;
         const k = b.closest('.step').dataset.k;
         draft = { ...(draft || state.me.vote || {}) };
         draft[k] = b.dataset.side;
@@ -180,63 +199,24 @@
         if (r && r.error) alert(r.error);
       });
     };
-    $('#leave').onclick = () => { if (confirm('Leave this game?')) leave(); };
-    tick();
-  }
-
-  function renderHost() {
-    const q = state.question;
-    const ph = state.phase;
-    let html = logo + statusBar();
-
-    if (ph === 'lobby') {
-      const link = `${location.origin}${location.pathname}?code=${state.code}`;
-      html += `<div class="panel codebox"><div class="lbl">JOIN WITH CODE</div><div class="big">${esc(state.code)}</div>
-        <p class="muted small" style="margin:0 0 14px">Players open this site and enter the code, or use the link:</p>
-        <button class="btn ghost sm" id="copy">📋 Copy invite link</button></div>
-        <div class="panel"><h2>Players (${state.playerCount})</h2>${playersHtml()}</div>
-        <button class="btn gold" id="next" ${state.playerCount ? '' : 'disabled'}>▶ Start game</button>`;
-    } else {
-      if (q && q.hint) html += `<p class="hint">${esc(q.hint)}</p>`;
-      if (q && (ph === 'voting' || ph === 'closed')) {
-        html += `${ph === 'voting' ? '<div class="timer" id="timer"></div><div class="bar"><div id="bar"></div></div>' : ''}
-          <div class="step"><h3><b>👑</b>Your choice as host – click one</h3><div class="opts">
-          ${['A', 'B'].map((s) => optHtml(q, s, state.hostChoice === s ? 'sel' : '')).join('')}</div></div>
-          <p class="center muted">${state.votedCount} / ${state.playerCount} voted${ph === 'closed' ? ' · time is up' : ''}</p>
-          <button class="btn gold" id="reveal" ${state.hostChoice ? '' : 'disabled'}>${state.hostChoice ? 'Reveal result' : 'Pick your choice first'}</button>`;
-      } else if (ph === 'reveal') {
-        html += `<div class="opts" style="margin-bottom:16px">${['A', 'B'].map((s) => optHtml(q, s, state.result.majority === s ? 'sel' : '', true)).join('')}</div>${resultHtml()}
-          <div class="panel"><h2>Leaderboard</h2>${boardHtml(null, 10)}</div>
-          <div class="row"><button class="btn" id="next" ${state.nextAvailable ? '' : 'disabled'}>Next question ▶</button>
-          <button class="btn ghost" id="fin">${state.nextAvailable ? 'Finish game' : 'Show final ranking 🏆'}</button></div>`;
-      } else if (ph === 'finished') {
-        html += `<div class="panel"><h2 class="center">🏆 Final ranking</h2>${podiumHtml()}${boardHtml(null)}</div>
-          <p class="center muted">Applause for the winner! Everyone with 70 points gets a gift 🎁</p>`;
-      }
-      if (ph === 'voting' || ph === 'closed') html += `<div class="panel" style="margin-top:16px"><h2>Players</h2>${playersHtml(true)}</div>`;
-    }
-    html += '<div class="footer"><button id="close">End &amp; close game</button></div>';
-    app.innerHTML = html;
-
-    app.querySelectorAll('.opt:not(.static)').forEach((b) => { b.onclick = () => socket.emit('admin:host', b.dataset.side); });
+    const leaveBtn = $('#leave');
+    if (leaveBtn) leaveBtn.onclick = () => { if (confirm('Leave this game?')) leave(); };
     const on = (id, ev) => { const el = $(id); if (el) el.onclick = () => socket.emit(ev); };
-    on('#reveal', 'admin:reveal'); on('#next', 'admin:next'); on('#fin', 'admin:finish');
+    on('#reveal', 'admin:reveal'); on('#next', 'admin:next');
     app.querySelectorAll('[data-kick]').forEach((b) => { b.onclick = () => { if (confirm('Remove this player?')) socket.emit('admin:kick', b.dataset.kick); }; });
     const copy = $('#copy');
     if (copy) copy.onclick = () => {
       const link = `${location.origin}${location.pathname}?code=${state.code}`;
       (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(() => { copy.textContent = '✅ Copied'; }, () => prompt('Copy this link:', link));
     };
-    $('#close').onclick = () => { if (confirm('End the game for everyone?')) { socket.emit('admin:close'); leave(); } };
     tick();
   }
 
   function playersHtml(showVote) {
-    if (!state.players.length) return '<p class="muted">Waiting for players to join…</p>';
     return `<table>${state.players.map((p) => `<tr class="${p.connected ? '' : 'off'}">
-      <td style="width:24px"><span class="dot ${p.connected ? '' : 'off'}"></span></td><td>${esc(p.name)}</td>
+      <td style="width:24px"><span class="dot ${p.connected ? '' : 'off'}"></span></td><td>${esc(p.name)}${p.isHost ? ' 👑' : ''}</td>
       <td class="n">${showVote ? (p.voted ? '✅' : '…') : p.score + ' pts'}</td>
-      <td class="n" style="width:80px"><button class="btn ghost sm" data-kick="${p.id}">Kick</button></td></tr>`).join('')}</table>`;
+      <td class="n" style="width:80px">${p.isHost ? '' : `<button class="btn ghost sm" data-kick="${p.id}">Kick</button>`}</td></tr>`).join('')}</table>`;
   }
 
   function tick() {

@@ -73,7 +73,7 @@ setInterval(() => {
 
 function leaderboard(room) {
   return [...room.players.values()]
-    .map((p) => ({ id: p.id, name: p.name, score: p.score, connected: p.connected }))
+    .map((p) => ({ id: p.id, name: p.name, score: p.score, connected: p.connected, isHost: !!p.isHost }))
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
 
@@ -98,9 +98,9 @@ function stateFor(room, socket) {
   if (info && info.role === 'host') {
     s.hostChoice = room.hostChoice;
     s.nextAvailable = room.qIndex + 1 < questions.length;
-    s.players = [...room.players.values()].map((p) => ({ id: p.id, name: p.name, connected: p.connected, voted: !!p.vote, score: p.score }));
+    s.players = [...room.players.values()].map((p) => ({ id: p.id, name: p.name, connected: p.connected, voted: !!p.vote, score: p.score, isHost: !!p.isHost }));
   }
-  const me = info && info.role === 'player' ? room.players.get(info.token) : null;
+  const me = info ? room.players.get(info.token) : null;
   if (me) {
     s.me = {
       id: me.id,
@@ -159,7 +159,9 @@ function reveal(room) {
   const majority = own.A === own.B ? null : own.A > own.B ? 'A' : 'B';
 
   for (const p of room.players.values()) {
-    const r = scorePlayer(p, p.vote, majority, room.hostChoice);
+    // The host cannot guess their own choice, so they only score on the majority.
+    const vote = p.vote && p.isHost ? { ...p.vote, host: null } : p.vote;
+    const r = scorePlayer(p, vote, majority, room.hostChoice);
     p.score += r.points;
     p.streak = r.streak;
     p.wrongStreak = r.wrongStreak;
@@ -200,7 +202,9 @@ io.on('connection', (socket) => {
     r.sockets.set(socket.id, { role, token });
   };
 
-  socket.on('host:create', async (password, ack) => {
+  socket.on('host:create', async (data, ack) => {
+    const password = data && data.password;
+    const name = data && data.name;
     const ip = clientIp(socket);
     const f = failures.get(ip) || { count: 0, until: 0 };
     if (f.count >= MAX_FAILS && f.until > Date.now()) {
@@ -217,7 +221,13 @@ io.on('connection', (socket) => {
     failures.delete(ip);
     if (rooms.size >= MAX_ROOMS) return done(ack, { error: 'Too many games running.' });
     const r = createRoom();
-    attach(r, 'host', null);
+    const token = crypto.randomBytes(16).toString('hex');
+    r.players.set(token, {
+      id: crypto.randomBytes(4).toString('hex'), token, name: cleanName(name) || 'Host', isHost: true,
+      score: 0, streak: 0, wrongStreak: 0, vote: null, last: null, connected: true,
+    });
+    r.hostPlayerToken = token;
+    attach(r, 'host', token);
     done(ack, { code: r.code, hostToken: r.hostToken });
     broadcast(r);
   });
@@ -225,7 +235,8 @@ io.on('connection', (socket) => {
   socket.on('host:resume', (data, ack) => {
     const r = data && rooms.get(String(data.code || '').toUpperCase());
     if (!r || r.hostToken !== data.hostToken) return done(ack, { error: 'Game not found.' });
-    attach(r, 'host', null);
+    attach(r, 'host', r.hostPlayerToken);
+    r.players.get(r.hostPlayerToken).connected = true;
     done(ack, { code: r.code });
     broadcast(r);
   });
@@ -253,12 +264,15 @@ io.on('connection', (socket) => {
 
   socket.on('vote', (v, ack) => {
     const info = room && room.sockets.get(socket.id);
-    const me = info && info.role === 'player' && room.players.get(info.token);
+    const me = info && room.players.get(info.token);
     if (!me) return done(ack, { error: 'Not joined.' });
-    if (room.phase !== 'voting') return done(ack, { error: 'Voting is closed.' });
+    // The host may still vote after time is up so the round can never get stuck.
+    if (room.phase !== 'voting' && !(me.isHost && room.phase === 'closed')) return done(ack, { error: 'Voting is closed.' });
     const ok = (x) => x === 'A' || x === 'B';
-    if (!v || !ok(v.own) || !ok(v.majority) || !ok(v.host)) return done(ack, { error: 'Pick all three.' });
-    me.vote = { own: v.own, majority: v.majority, host: v.host };
+    if (!v || !ok(v.own) || !ok(v.majority) || (!me.isHost && !ok(v.host))) return done(ack, { error: 'Pick all choices.' });
+    // The host's own choice is the choice everybody else has to guess.
+    me.vote = { own: v.own, majority: v.majority, host: me.isHost ? v.own : v.host };
+    if (me.isHost) room.hostChoice = v.own;
     done(ack, { ok: true });
     broadcast(room);
   });
@@ -270,26 +284,15 @@ io.on('connection', (socket) => {
     broadcast(room);
   }));
 
-  socket.on('admin:host', host((choice) => {
-    if ((room.phase === 'voting' || room.phase === 'closed') && (choice === 'A' || choice === 'B')) {
-      room.hostChoice = choice;
-      broadcast(room);
-    }
-  }));
-
   socket.on('admin:reveal', host(() => {
+    if (room.hostChoice === null) return;
     reveal(room);
-    broadcast(room);
-  }));
-
-  socket.on('admin:finish', host(() => {
-    finish(room);
     broadcast(room);
   }));
 
   socket.on('admin:kick', host((id) => {
     for (const [token, p] of room.players) {
-      if (p.id === id) {
+      if (p.id === id && !p.isHost) {
         room.players.delete(token);
         for (const [sid, info] of room.sockets) {
           if (info.token === token) {
@@ -303,17 +306,11 @@ io.on('connection', (socket) => {
     broadcast(room);
   }));
 
-  socket.on('admin:close', host(() => {
-    clearTimer(room);
-    io.to(room.code).emit('closed');
-    rooms.delete(room.code);
-  }));
-
   socket.on('disconnect', () => {
     if (!room) return;
     const info = room.sockets.get(socket.id);
     room.sockets.delete(socket.id);
-    if (info && info.role === 'player') {
+    if (info) {
       const p = room.players.get(info.token);
       if (p && ![...room.sockets.values()].some((i) => i.token === info.token)) p.connected = false;
     }

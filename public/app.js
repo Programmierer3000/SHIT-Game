@@ -1,245 +1,253 @@
 (() => {
   const app = document.getElementById('app');
   const socket = io(window.BACKEND_URL || undefined, { transports: ['websocket', 'polling'] });
-  const isAdminPage = location.hash === '#admin';
+  const KEY = 'shit_session';
 
   let state = null;
-  let joined = false;
-  let adminOk = false;
-  let draft = {};
-  let draftQ = -1;
-  let viewKey = '';
+  let session = JSON.parse(localStorage.getItem(KEY) || 'null'); // { role, code, token|hostToken, name }
+  let draft = null;
+  let draftQ = -2;
   let offset = 0;
-  let error = '';
+  let landingBuilt = false;
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const $ = (sel) => app.querySelector(sel);
+  const save = (s) => { session = s; if (s) localStorage.setItem(KEY, JSON.stringify(s)); else localStorage.removeItem(KEY); };
+  const leave = () => { save(null); state = null; landingBuilt = false; render(); };
 
-  function tryJoin(name) {
-    socket.emit('join', { name, token: localStorage.getItem('shit_token') }, (res) => {
-      if (res.error) {
-        error = res.error;
-        joined = false;
-        viewKey = '';
-        render();
-        return;
-      }
-      localStorage.setItem('shit_token', res.token);
-      if (name) localStorage.setItem('shit_name', name);
-      joined = true;
-      error = '';
-      viewKey = '';
-      render();
-    });
+  function setErr(msg) { const e = $('.err'); if (e) e.textContent = msg || ''; }
+
+  function resume() {
+    if (!session) return;
+    if (session.role === 'host') {
+      socket.emit('host:resume', { code: session.code, hostToken: session.hostToken }, (r) => { if (r.error) leave(); });
+    } else {
+      socket.emit('join', { code: session.code, token: session.token, name: session.name }, (r) => { if (r.error) leave(); });
+    }
   }
 
-  socket.on('connect', () => {
-    if (isAdminPage) {
-      const pw = sessionStorage.getItem('shit_admin');
-      if (pw) socket.emit('admin:auth', pw, (r) => { adminOk = !!r.ok; viewKey = ''; render(); });
-      else socket.emit('spectate');
-    } else if (localStorage.getItem('shit_token')) {
-      tryJoin(localStorage.getItem('shit_name') || '');
-    } else {
-      socket.emit('spectate');
-    }
-  });
-
-  socket.on('reset', () => {
-    localStorage.removeItem('shit_token');
-    joined = false;
-    viewKey = '';
-  });
-
+  socket.on('connect', resume);
+  socket.on('kicked', () => { alert('You were removed from the game.'); leave(); });
+  socket.on('closed', () => { if (session && session.role !== 'host') alert('The host closed the game.'); leave(); });
   socket.on('state', (s) => {
+    if (!session) return;
     state = s;
     offset = s.serverNow - Date.now();
-    if (s.qIndex !== draftQ) { draftQ = s.qIndex; draft = {}; }
-    if (!isAdminPage && joined && !s.me) { joined = false; viewKey = ''; }
+    const qKey = s.code + ':' + s.qIndex;
+    if (qKey !== draftQ) { draftQ = qKey; draft = null; }
     render();
   });
 
-  function header() {
-    return '<h1>Would you rather…?</h1>';
-  }
+  const logo = '<div class="logo"><small>SHIT MEETING</small><h1>Would you rather…?</h1></div>';
 
-  function optHtml(q, side, cls, extra = '') {
+  function optHtml(q, side, cls, isStatic) {
     const txt = side === 'A' ? q.a : q.b;
     const em = side === 'A' ? q.emojiA : q.emojiB;
-    return `<button class="opt ${side.toLowerCase()} ${cls || ''} ${extra}" data-side="${side}">
+    return `<button class="opt ${side.toLowerCase()} ${cls || ''} ${isStatic ? 'static' : ''}" data-side="${side}">
       <span class="emoji">${em || ''}</span><span class="tag">${side}</span><span>${esc(txt)}</span></button>`;
   }
 
-  function leaderboardHtml(meId, limit) {
+  function boardHtml(meId, limit) {
+    const medals = ['🥇', '🥈', '🥉'];
     const rows = state.leaderboard.slice(0, limit || 1000).map((p, i) => `
       <tr class="${p.id === meId ? 'me' : ''} ${p.connected ? '' : 'off'}">
-        <td>${i + 1}</td><td>${esc(p.name)} ${p.score >= state.maxPoints ? '<span class="badge">🎁 70</span>' : ''}</td><td class="n">${p.score}</td></tr>`).join('');
-    return `<table><thead><tr><th>#</th><th>Player</th><th class="n">Points</th></tr></thead><tbody>${rows}</tbody></table>`;
+        <td class="rank">${medals[i] && p.score > 0 ? medals[i] : i + 1}</td>
+        <td>${esc(p.name)}${p.score >= state.maxPoints ? '<span class="badge">🎁 70</span>' : ''}</td>
+        <td class="n">${p.score}</td></tr>`).join('');
+    return `<table><thead><tr><th>#</th><th>Player</th><th class="n">Pts</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No players yet</td></tr>'}</tbody></table>`;
   }
 
-  function resultHtml(q) {
+  function podiumHtml() {
+    const t = state.leaderboard.slice(0, 3);
+    if (!t.length) return '';
+    const order = [t[1], t[0], t[2]].map((p, i) => (p ? [p, ['p2', 'p1', 'p3'][i], ['🥈', '🥇', '🥉'][i]] : null)).filter(Boolean);
+    return `<div class="podium">${order.map(([p, c, m]) => `<div class="${c}"><em>${m}</em>${esc(p.name)}<br>${p.score} pts</div>`).join('')}</div>`;
+  }
+
+  function resultHtml() {
     const r = state.result;
     const max = Math.max(r.own.A, r.own.B, 1);
-    const bar = (s) => `<div class="res"><b style="width:18px">${s}</b><div class="fill ${s.toLowerCase()}" style="width:${(r['own'][s] / max) * 70}%"></div><span>${r.own[s]}</span></div>`;
-    const maj = r.majority ? `Majority: <b>${r.majority}</b>` : 'Majority: <b>tie</b> (nobody scores)';
-    return `<div class="panel"><div class="bars">${bar('A')}${bar('B')}</div>
-      <div class="center">${maj} &nbsp;·&nbsp; Host: <b>${r.host || '—'}</b></div></div>`;
+    const bar = (s) => `<div class="res"><b style="color:var(--${s.toLowerCase()})">${s}</b><div class="track"><div class="fill ${s.toLowerCase()}" style="width:${(r.own[s] / max) * 100}%"></div></div><span>${r.own[s]}</span></div>`;
+    return `<div class="panel">${bar('A')}${bar('B')}
+      <div class="parts" style="margin-top:14px"><span class="chip">Majority: <b>${r.majority || 'tie'}</b></span><span class="chip">Host: <b>${r.host || '—'}</b></span></div></div>`;
+  }
+
+  function statusBar(extra) {
+    return `<div class="status"><span class="chip">Game <b>${esc(state.code)}</b></span>
+      <span class="chip">👥 ${state.playerCount}</span>${extra || ''}
+      <span class="chip">Question ${Math.max(state.qIndex + 1, 0)}/${state.total}</span></div>`;
   }
 
   function render() {
-    if (!state) { app.innerHTML = header() + '<p class="center muted">Connecting…</p>'; return; }
-    if (isAdminPage) return renderAdmin();
-    if (!joined) return renderJoin();
-    renderPlayer();
+    if (!session) return renderLanding();
+    landingBuilt = false;
+    if (!state) { app.innerHTML = logo + '<p class="center muted">Connecting…</p>'; return; }
+    if (session.role === 'host') renderHost(); else renderPlayer();
   }
 
-  function renderJoin() {
-    if (viewKey === 'join') {
-      const e = $('.err');
-      if (e) e.textContent = error;
-      return;
-    }
-    viewKey = 'join';
-    app.innerHTML = `${header()}<div class="panel">
-      <h2>Join the game</h2>
-      <p class="muted">${state.playerCount} player(s) in the lobby.</p>
-      <p class="err">${esc(error)}</p>
-      <input id="name" maxlength="20" placeholder="Your name" autocomplete="off" value="${esc(localStorage.getItem('shit_name') || '')}">
-      <button id="go" style="width:100%">Join</button></div>`;
-    const go = () => { const n = $('#name').value.trim(); if (n) tryJoin(n); };
-    $('#go').onclick = go;
-    $('#name').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  function renderLanding() {
+    if (landingBuilt) return;
+    landingBuilt = true;
+    const urlCode = (new URLSearchParams(location.search).get('code') || '').toUpperCase().slice(0, 4);
+    app.innerHTML = `${logo}<div class="split">
+      <div class="panel"><h2>🎮 Join a game</h2>
+        <p class="err" id="e1"></p>
+        <input id="code" class="code" maxlength="4" placeholder="CODE" autocomplete="off" value="${esc(urlCode)}">
+        <input id="name" maxlength="20" placeholder="Your name" autocomplete="off">
+        <button class="btn" id="join">Join</button></div>
+      <div class="panel"><h2>👑 Host a game</h2>
+        <p class="err" id="e2"></p>
+        <input id="pw" type="password" placeholder="Host password" autocomplete="off">
+        <button class="btn gold" id="create">Create game</button>
+        <p class="muted small">You get a code that players enter to join.</p></div></div>`;
+    const join = () => {
+      const code = $('#code').value.trim().toUpperCase();
+      const name = $('#name').value.trim();
+      if (code.length !== 4 || !name) { $('#e1').textContent = 'Enter the 4-letter code and your name.'; return; }
+      socket.emit('join', { code, name }, (r) => {
+        if (r.error) { $('#e1').textContent = r.error; return; }
+        save({ role: 'player', code: r.code, token: r.token, name });
+      });
+    };
+    const create = () => {
+      socket.emit('host:create', $('#pw').value, (r) => {
+        if (r.error) { $('#e2').textContent = r.error; return; }
+        save({ role: 'host', code: r.code, hostToken: r.hostToken });
+      });
+    };
+    $('#join').onclick = join;
+    $('#create').onclick = create;
+    $('#name').onkeydown = (e) => { if (e.key === 'Enter') join(); };
+    $('#code').onkeydown = (e) => { if (e.key === 'Enter') $('#name').focus(); };
+    $('#pw').onkeydown = (e) => { if (e.key === 'Enter') create(); };
   }
 
   function renderPlayer() {
-    viewKey = 'player';
     const me = state.me;
+    if (!me) { app.innerHTML = logo + '<p class="center muted">Joining…</p>'; return; }
     const q = state.question;
-    let html = header();
-    const head = `<p class="center muted small">${esc(me.name)} · ${me.score} / ${state.maxPoints} pts · rank ${me.rank}/${state.playerCount}</p>`;
+    const me_ = `<span class="chip gold">${esc(me.name)} · ${me.score}/${state.maxPoints}</span>`;
+    let html = logo + statusBar(me_);
 
     if (state.phase === 'lobby') {
-      html += `${head}<div class="panel center"><h2>Waiting for the host…</h2>
-        <p class="muted">${state.playerCount} player(s) joined.</p></div>`;
+      html += `<div class="panel center"><h2>You're in! 🎉</h2><p class="muted">Waiting for the host to start…</p>
+        <p>${state.playerCount} player(s) in the lobby</p></div>`;
     } else if (state.phase === 'voting' || state.phase === 'closed') {
       const open = state.phase === 'voting';
-      const voted = !!me.vote;
-      const pick = voted && !draft.edited ? me.vote : draft;
+      const saved = me.vote;
+      const pick = draft || saved || {};
       if (q.hint) html += `<p class="hint">${esc(q.hint)}</p>`;
-      html += `${head}<div class="timer" id="timer"></div><div class="bar"><div id="bar"></div></div>`;
-      const steps = [['own', '1 · Your own choice'], ['majority', '2 · The majority’s choice'], ['host', '3 · The host’s choice']];
-      steps.forEach(([k, label], i) => {
-        html += `<div class="step ${i ? 'compact' : ''}" data-k="${k}"><h3>${label}</h3><div class="opts">
+      html += '<div class="timer" id="timer"></div><div class="bar"><div id="bar"></div></div>';
+      [['own', '1', 'Your own choice'], ['majority', '2', 'The majority’s choice'], ['host', '3', 'The host’s choice']].forEach(([k, n, label], i) => {
+        html += `<div class="step ${i ? 'compact' : ''}" data-k="${k}"><h3><b>${n}</b>${label}</h3><div class="opts">
           ${['A', 'B'].map((s) => optHtml(q, s, pick[k] === s ? 'sel' : '')).join('')}</div></div>`;
       });
       const ready = pick.own && pick.majority && pick.host;
-      html += `<button id="send" style="width:100%" ${open && ready ? '' : 'disabled'}>${voted ? 'Update vote' : 'Submit vote'}</button>
-        <p class="center muted small">${!open ? 'Voting closed.' : voted ? '✅ Vote saved – you can still change it.' : 'Pick all three, then submit.'}</p>`;
+      const changed = !saved || !draft || ['own', 'majority', 'host'].some((k) => saved[k] !== draft[k]);
+      html += `<button class="btn" id="send" ${open && ready && changed ? '' : 'disabled'}>${saved ? 'Update vote' : 'Submit vote'}</button>
+        <p class="center muted small" style="margin-top:12px">${!open ? '⏱ Voting closed' : saved ? '✅ Vote saved – you can still change it' : 'Pick all three, then submit'}</p>`;
     } else if (state.phase === 'reveal') {
       const l = me.last;
-      html += `${head}${resultHtml(q)}`;
+      html += resultHtml();
       if (l && l.voted) {
-        html += `<div class="panel"><div class="delta">+${l.points}</div>
-          <div class="parts">${l.parts.length ? l.parts.map((p) => `${esc(p.label)} +${p.pts}`).join(' · ') : 'No points this round'}</div>
-          <p class="center muted small">Streak: ${me.streak} · Misses in a row: ${me.wrongStreak}</p></div>`;
+        html += `<div class="panel"><div class="delta ${l.points ? '' : 'zero'}">+${l.points}</div>
+          <div class="parts">${l.parts.length ? l.parts.map((p) => `<span class="chip">${esc(p.label)} +${p.pts}</span>`).join('') : '<span class="chip">No points this round</span>'}</div>
+          <p class="center muted small" style="margin:12px 0 0">Streak ${me.streak} · Misses in a row ${me.wrongStreak}</p></div>`;
       } else {
         html += '<div class="panel center muted">You did not vote this round.</div>';
       }
-      html += `<div class="panel"><h2>Leaderboard</h2>${leaderboardHtml(me.id, 10)}</div>`;
+      html += `<div class="panel"><h2>Leaderboard · you are #${me.rank}</h2>${boardHtml(me.id, 10)}</div>`;
     } else {
-      html += `${head}<div class="panel"><h2 class="center">🏆 Final ranking</h2>${leaderboardHtml(me.id)}</div>
+      html += `<div class="panel"><h2 class="center">🏆 Final ranking</h2>${podiumHtml()}${boardHtml(me.id)}</div>
         <p class="center">${me.score >= state.maxPoints ? '🎁 You reached 70 points – pick up your gift!' : 'Applause for the winner! 👏'}</p>`;
     }
+    html += '<div class="footer"><button id="leave">Leave game</button></div>';
     app.innerHTML = html;
 
     app.querySelectorAll('.step .opt').forEach((b) => {
       b.onclick = () => {
         if (state.phase !== 'voting') return;
         const k = b.closest('.step').dataset.k;
-        if (!draft.edited) draft = { ...(state.me.vote || {}), edited: true };
+        draft = { ...(draft || state.me.vote || {}) };
         draft[k] = b.dataset.side;
         renderPlayer();
       };
     });
     const send = $('#send');
     if (send) send.onclick = () => {
-      const pick = draft.edited ? draft : state.me.vote;
-      socket.emit('vote', { own: pick.own, majority: pick.majority, host: pick.host }, (r) => {
+      send.disabled = true;
+      socket.emit('vote', { own: draft.own, majority: draft.majority, host: draft.host }, (r) => {
         if (r && r.error) alert(r.error);
-        draft = {};
       });
     };
+    $('#leave').onclick = () => { if (confirm('Leave this game?')) leave(); };
     tick();
   }
 
-  function renderAdminLogin() {
-    if (viewKey === 'login') {
-      const e = $('.err');
-      if (e) e.textContent = error;
-      return;
-    }
-    viewKey = 'login';
-    app.innerHTML = `${header()}<div class="panel"><h2>Host login</h2><p class="err">${esc(error)}</p>
-      <input id="pw" type="password" placeholder="Admin password"><button id="go" style="width:100%">Login</button></div>`;
-    const go = () => {
-      const pw = $('#pw').value;
-      socket.emit('admin:auth', pw, (r) => {
-        if (r.ok) { sessionStorage.setItem('shit_admin', pw); adminOk = true; error = ''; viewKey = ''; }
-        else error = r.error;
-        render();
-      });
-    };
-    $('#go').onclick = go;
-    $('#pw').onkeydown = (e) => { if (e.key === 'Enter') go(); };
-  }
-
-  function renderAdmin() {
-    if (!adminOk || !state.admin) return renderAdminLogin();
-    viewKey = 'admin';
+  function renderHost() {
     const q = state.question;
     const ph = state.phase;
-    let html = `${header()}<p class="center muted">Host panel · ${state.playerCount} players · question ${Math.max(state.qIndex + 1, 0)}/${state.total}</p>`;
+    let html = logo + statusBar();
 
-    if (q) {
-      if (q.hint) html += `<p class="hint">${esc(q.hint)}</p>`;
-      html += `<div class="opts" style="margin-bottom:16px">${optHtml(q, 'A', state.hostChoice === 'A' ? 'sel' : '')}${optHtml(q, 'B', state.hostChoice === 'B' ? 'sel' : '')}</div>`;
+    if (ph === 'lobby') {
+      const link = `${location.origin}${location.pathname}?code=${state.code}`;
+      html += `<div class="panel codebox"><div class="lbl">JOIN WITH CODE</div><div class="big">${esc(state.code)}</div>
+        <p class="muted small" style="margin:0 0 14px">Players open this site and enter the code, or use the link:</p>
+        <button class="btn ghost sm" id="copy">📋 Copy invite link</button></div>
+        <div class="panel"><h2>Players (${state.playerCount})</h2>${playersHtml()}</div>
+        <button class="btn gold" id="next" ${state.playerCount ? '' : 'disabled'}>▶ Start game</button>`;
+    } else {
+      if (q && q.hint) html += `<p class="hint">${esc(q.hint)}</p>`;
+      if (q && (ph === 'voting' || ph === 'closed')) {
+        html += `${ph === 'voting' ? '<div class="timer" id="timer"></div><div class="bar"><div id="bar"></div></div>' : ''}
+          <div class="step"><h3><b>👑</b>Your choice as host – click one</h3><div class="opts">
+          ${['A', 'B'].map((s) => optHtml(q, s, state.hostChoice === s ? 'sel' : '')).join('')}</div></div>
+          <p class="center muted">${state.votedCount} / ${state.playerCount} voted${ph === 'closed' ? ' · time is up' : ''}</p>
+          <button class="btn gold" id="reveal" ${state.hostChoice ? '' : 'disabled'}>${state.hostChoice ? 'Reveal result' : 'Pick your choice first'}</button>`;
+      } else if (ph === 'reveal') {
+        html += `<div class="opts" style="margin-bottom:16px">${['A', 'B'].map((s) => optHtml(q, s, state.result.majority === s ? 'sel' : '', true)).join('')}</div>${resultHtml()}
+          <div class="panel"><h2>Leaderboard</h2>${boardHtml(null, 10)}</div>
+          <div class="row"><button class="btn" id="next" ${state.nextAvailable ? '' : 'disabled'}>Next question ▶</button>
+          <button class="btn ghost" id="fin">${state.nextAvailable ? 'Finish game' : 'Show final ranking 🏆'}</button></div>`;
+      } else if (ph === 'finished') {
+        html += `<div class="panel"><h2 class="center">🏆 Final ranking</h2>${podiumHtml()}${boardHtml(null)}</div>
+          <p class="center muted">Applause for the winner! Everyone with 70 points gets a gift 🎁</p>`;
+      }
+      if (ph === 'voting' || ph === 'closed') html += `<div class="panel" style="margin-top:16px"><h2>Players</h2>${playersHtml(true)}</div>`;
     }
-    if (ph === 'voting') html += '<div class="timer" id="timer"></div><div class="bar"><div id="bar"></div></div>';
-    if (ph === 'voting' || ph === 'closed') {
-      html += `<p class="center">Your (host) choice: <b>${state.hostChoice || 'not chosen yet – click A or B above'}</b></p>
-        <p class="center muted">${state.votedCount} / ${state.playerCount} voted${ph === 'closed' ? ' · time is up' : ''}</p>
-        <button id="reveal" style="width:100%" ${state.hostChoice ? '' : 'disabled'}>Reveal result</button>`;
-    } else if (ph === 'reveal') {
-      html += resultHtml(q);
-    }
-    if (ph === 'lobby' || ph === 'reveal') {
-      html += `<div class="row" style="margin:12px 0"><button id="next" ${state.nextAvailable ? '' : 'disabled'}>${ph === 'lobby' ? 'Start first question' : 'Next question'}</button>
-        <button id="fin" class="secondary">Finish game</button></div>`;
-    }
-    html += `<div class="panel"><h2>Leaderboard</h2>${leaderboardHtml(null, 15)}</div>`;
-    html += `<div class="panel"><h2>Players</h2><table>${state.players.map((p) => `<tr class="${p.connected ? '' : 'off'}"><td>${esc(p.name)}</td>
-      <td>${ph === 'voting' || ph === 'closed' ? (p.voted ? '✅' : '…') : ''}</td><td class="n"><button class="secondary small" data-kick="${p.id}">Kick</button></td></tr>`).join('')}</table></div>
-      <div class="center"><button id="reset" class="warn">Reset whole game</button></div>`;
+    html += '<div class="footer"><button id="close">End &amp; close game</button></div>';
     app.innerHTML = html;
 
-    app.querySelectorAll('.opt').forEach((b) => { b.onclick = () => socket.emit('admin:host', b.dataset.side); });
+    app.querySelectorAll('.opt:not(.static)').forEach((b) => { b.onclick = () => socket.emit('admin:host', b.dataset.side); });
     const on = (id, ev) => { const el = $(id); if (el) el.onclick = () => socket.emit(ev); };
     on('#reveal', 'admin:reveal'); on('#next', 'admin:next'); on('#fin', 'admin:finish');
-    const rs = $('#reset');
-    if (rs) rs.onclick = () => { if (confirm('Delete all players and scores?')) socket.emit('admin:reset'); };
-    app.querySelectorAll('[data-kick]').forEach((b) => { b.onclick = () => socket.emit('admin:kick', b.dataset.kick); });
+    app.querySelectorAll('[data-kick]').forEach((b) => { b.onclick = () => { if (confirm('Remove this player?')) socket.emit('admin:kick', b.dataset.kick); }; });
+    const copy = $('#copy');
+    if (copy) copy.onclick = () => {
+      const link = `${location.origin}${location.pathname}?code=${state.code}`;
+      (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(() => { copy.textContent = '✅ Copied'; }, () => prompt('Copy this link:', link));
+    };
+    $('#close').onclick = () => { if (confirm('End the game for everyone?')) { socket.emit('admin:close'); leave(); } };
     tick();
+  }
+
+  function playersHtml(showVote) {
+    if (!state.players.length) return '<p class="muted">Waiting for players to join…</p>';
+    return `<table>${state.players.map((p) => `<tr class="${p.connected ? '' : 'off'}">
+      <td style="width:24px"><span class="dot ${p.connected ? '' : 'off'}"></span></td><td>${esc(p.name)}</td>
+      <td class="n">${showVote ? (p.voted ? '✅' : '…') : p.score + ' pts'}</td>
+      <td class="n" style="width:80px"><button class="btn ghost sm" data-kick="${p.id}">Kick</button></td></tr>`).join('')}</table>`;
   }
 
   function tick() {
     const t = $('#timer');
     if (!t || !state || !state.endsAt) return;
-    const total = state.voteSeconds;
     const left = Math.max(0, (state.endsAt - (Date.now() + offset)) / 1000);
-    t.textContent = Math.ceil(left) + 's';
+    t.textContent = Math.ceil(left);
     t.classList.toggle('low', left <= 10);
     const bar = $('#bar');
-    if (bar) bar.style.width = Math.min(100, (left / total) * 100) + '%';
+    if (bar) bar.style.width = Math.min(100, (left / state.voteSeconds) * 100) + '%';
   }
   setInterval(tick, 250);
+  render();
 })();

@@ -7,9 +7,10 @@ Live-Voting-Website für das „SHIT Meeting“. Spieler voten pro Frage dreimal
 - Fragen: [server/questions.json](server/questions.json) (Texte aus der PPP, Bilder/GIFs wurden durch Emojis ersetzt)
 
 ## Spielablauf
-- Spieler öffnen die Seite und geben einen Namen ein (mind. 25, Standard-Limit 100).
-- Host öffnet `/#admin`, loggt sich mit `ADMIN_PASSWORD` ein, startet Fragen, wählt seine eigene Option (A/B) und deckt auf.
-- 60 s Zeit pro Frage (`VOTE_SECONDS`).
+- Auf der Startseite klickt der Host **Create game** (Passwort = `ADMIN_PASSWORD`) und bekommt einen 4-stelligen Code plus Einladungslink.
+- Spieler öffnen dieselbe Seite, geben Code + Namen ein (oder nutzen den Link `?code=XXXX`). Standard-Limit 100 Spieler.
+- Der Host startet die 12 Fragen (feste Reihenfolge), wählt seine Option (A/B) und deckt auf. 60 s pro Frage (`VOTE_SECONDS`).
+- Mehrere Spiele parallel möglich; Reload/Reconnect stellt die Sitzung wieder her.
 
 ## Punkte
 | | |

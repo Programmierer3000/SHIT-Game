@@ -42,10 +42,10 @@ function newCode() {
   }
 }
 
-function createRoom() {
+function createRoom(code, hostToken) {
   const room = {
-    code: newCode(),
-    hostToken: crypto.randomBytes(16).toString('hex'),
+    code: code || newCode(),
+    hostToken: hostToken || crypto.randomBytes(16).toString('hex'),
     players: new Map(), // token -> player
     sockets: new Map(), // socket.id -> { role, token }
     phase: 'lobby',
@@ -222,8 +222,23 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:resume', (data, ack) => {
-    const r = data && rooms.get(String(data.code || '').toUpperCase());
-    if (!r || r.hostToken !== data.hostToken) return done(ack, { error: 'Game not found.' });
+    const code = String((data && data.code) || '').toUpperCase();
+    let r = rooms.get(code);
+    if (!r) {
+      // The server lost the game (restart/sleep): let the host restore it under the same code.
+      const tokenOk = /^[0-9a-f]{32}$/.test(String((data && data.hostToken) || ''));
+      if (!tokenOk || !new RegExp(`^[${CODE_CHARS}]{4}$`).test(code) || rooms.size >= MAX_ROOMS) {
+        return done(ack, { error: 'Game not found.' });
+      }
+      r = createRoom(code, data.hostToken);
+      const token = crypto.randomBytes(16).toString('hex');
+      r.players.set(token, {
+        id: crypto.randomBytes(4).toString('hex'), token, name: cleanName(data.name) || 'Host', isHost: true,
+        score: 0, streak: 0, wrongStreak: 0, vote: null, last: null, connected: true,
+      });
+      r.hostPlayerToken = token;
+    }
+    if (r.hostToken !== data.hostToken) return done(ack, { error: 'Game not found.' });
     attach(r, 'host', r.hostPlayerToken);
     r.players.get(r.hostPlayerToken).connected = true;
     done(ack, { code: r.code });

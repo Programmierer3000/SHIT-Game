@@ -20,7 +20,7 @@
   function resume() {
     if (!session) return;
     if (session.role === 'host') {
-      socket.emit('host:resume', { code: session.code, hostToken: session.hostToken }, (r) => { if (r.error) leave(); });
+      socket.emit('host:resume', { code: session.code, hostToken: session.hostToken, name: session.name }, (r) => { if (r.error) leave(); });
     } else {
       socket.emit('join', { code: session.code, token: session.token, name: session.name }, (r) => { if (r.error) leave(); });
     }
@@ -109,9 +109,10 @@
       });
     };
     const create = () => {
-      socket.emit('host:create', { name: $('#hname').value.trim() }, (r) => {
+      const name = $('#hname').value.trim();
+      socket.emit('host:create', { name }, (r) => {
         if (r.error) { $('#e2').textContent = r.error; return; }
-        save({ role: 'host', code: r.code, hostToken: r.hostToken });
+        save({ role: 'host', code: r.code, hostToken: r.hostToken, name });
       });
     };
     $('#join').onclick = join;

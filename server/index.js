@@ -1,4 +1,17 @@
 const path = require('path');
+const fs = require('fs');
+
+// Minimal .env loader (local use); real env vars win.
+try {
+  const envFile = path.join(__dirname, '..', '.env');
+  if (fs.existsSync(envFile)) {
+    for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^(["'])(.*)\1$/, '$2');
+    }
+  }
+} catch (_) {}
+
 const crypto = require('crypto');
 const http = require('http');
 const express = require('express');

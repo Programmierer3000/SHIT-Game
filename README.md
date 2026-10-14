@@ -34,6 +34,6 @@ Hinweis: Render Free schläft nach Inaktivität ein – vor dem Meeting die Seit
 ## Lokal
 ```
 npm install
-npm start      # http://localhost:3000, Admin: http://localhost:3000/#admin (Standard-Passwort "host")
+npm start      # http://localhost:3000 (Passwort aus .env, sonst "host")
 npm test
 ```

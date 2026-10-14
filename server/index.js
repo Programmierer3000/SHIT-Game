@@ -20,7 +20,6 @@ const questions = require('./questions.json');
 const { scorePlayer, MAX_POINTS } = require('./scoring');
 
 const PORT = process.env.PORT || 3000;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'host';
 const VOTE_SECONDS = Number(process.env.VOTE_SECONDS || 60);
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 100);
 const MAX_ROOMS = 50;
@@ -180,14 +179,14 @@ function finish(room) {
 
 const cleanName = (n) => String(n || '').replace(/\s+/g, ' ').trim().slice(0, 20);
 
-// Brute-force protection for the host password: 5 failures per IP -> 15 min lockout.
-const failures = new Map(); // ip -> { count, until }
-const MAX_FAILS = 5;
-const LOCK_MS = 15 * 60 * 1000;
+// Anyone may host; limit game creation per IP to avoid abuse.
+const created = new Map(); // ip -> timestamps
+const CREATE_LIMIT = 5;
+const CREATE_WINDOW_MS = 10 * 60 * 1000;
 const clientIp = (socket) => String(socket.handshake.headers['x-forwarded-for'] || socket.handshake.address).split(',')[0].trim();
-const sha = (s) => crypto.createHash('sha256').update(String(s)).digest();
 setInterval(() => {
-  for (const [ip, f] of failures) if (f.until < Date.now() && f.count < MAX_FAILS) failures.delete(ip);
+  const now = Date.now();
+  for (const [ip, ts] of created) if (!ts.some((x) => now - x < CREATE_WINDOW_MS)) created.delete(ip);
 }, 10 * 60 * 1000).unref();
 
 io.on('connection', (socket) => {
@@ -202,23 +201,13 @@ io.on('connection', (socket) => {
     r.sockets.set(socket.id, { role, token });
   };
 
-  socket.on('host:create', async (data, ack) => {
-    const password = data && data.password;
+  socket.on('host:create', (data, ack) => {
     const name = data && data.name;
     const ip = clientIp(socket);
-    const f = failures.get(ip) || { count: 0, until: 0 };
-    if (f.count >= MAX_FAILS && f.until > Date.now()) {
-      return done(ack, { error: `Too many attempts. Try again in ${Math.ceil((f.until - Date.now()) / 60000)} min.` });
-    }
-    if (f.count >= MAX_FAILS) { f.count = 0; }
-    if (!crypto.timingSafeEqual(sha(password), sha(ADMIN_PASSWORD))) {
-      f.count += 1;
-      f.until = Date.now() + LOCK_MS;
-      failures.set(ip, f);
-      await new Promise((r) => setTimeout(r, 800));
-      return done(ack, { error: 'Wrong password.' });
-    }
-    failures.delete(ip);
+    const recent = (created.get(ip) || []).filter((x) => Date.now() - x < CREATE_WINDOW_MS);
+    if (recent.length >= CREATE_LIMIT) return done(ack, { error: 'Too many games created. Try again in a few minutes.' });
+    recent.push(Date.now());
+    created.set(ip, recent);
     if (rooms.size >= MAX_ROOMS) return done(ack, { error: 'Too many games running.' });
     const r = createRoom();
     const token = crypto.randomBytes(16).toString('hex');
@@ -318,4 +307,4 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => console.log(`SHIT-Game server on :${PORT} (admin password ${process.env.ADMIN_PASSWORD ? 'set' : 'DEFAULT "host"'})`));
+server.listen(PORT, () => console.log(`SHIT-Game server on :${PORT} `));

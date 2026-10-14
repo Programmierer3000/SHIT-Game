@@ -97,7 +97,6 @@
       <div class="panel"><h2>👑 Host a game</h2>
         <p class="err" id="e2"></p>
         <input id="hname" maxlength="20" placeholder="Your name (you play too)" autocomplete="off">
-        <input id="pw" type="password" placeholder="Host password" autocomplete="off">
         <button class="btn gold" id="create">Create game</button>
         <p class="muted small">You get a code that players enter to join.</p></div></div>`;
     const join = () => {
@@ -110,7 +109,7 @@
       });
     };
     const create = () => {
-      socket.emit('host:create', { password: $('#pw').value, name: $('#hname').value.trim() }, (r) => {
+      socket.emit('host:create', { name: $('#hname').value.trim() }, (r) => {
         if (r.error) { $('#e2').textContent = r.error; return; }
         save({ role: 'host', code: r.code, hostToken: r.hostToken });
       });
@@ -119,7 +118,7 @@
     $('#create').onclick = create;
     $('#name').onkeydown = (e) => { if (e.key === 'Enter') join(); };
     $('#code').onkeydown = (e) => { if (e.key === 'Enter') $('#name').focus(); };
-    $('#pw').onkeydown = (e) => { if (e.key === 'Enter') create(); };
+    $('#hname').onkeydown = (e) => { if (e.key === 'Enter') create(); };
   }
 
   function renderPlayer() {

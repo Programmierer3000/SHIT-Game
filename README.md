@@ -7,7 +7,7 @@ Live-Voting-Website für das „SHIT Meeting“. Spieler voten pro Frage dreimal
 - Fragen: [server/questions.json](server/questions.json) (Texte aus der PPP, Bilder/GIFs wurden durch Emojis ersetzt)
 
 ## Spielablauf
-- Auf der Startseite klickt der Host **Create game** (Passwort = `ADMIN_PASSWORD`) und bekommt einen 4-stelligen Code plus Einladungslink.
+- Auf der Startseite klickt der Host **Create game** (kein Passwort n�tig, jeder darf hosten; max. 5 neue Spiele pro IP / 10 Min.) und bekommt einen 4-stelligen Code plus Einladungslink.
 - Spieler öffnen dieselbe Seite, geben Code + Namen ein (oder nutzen den Link `?code=XXXX`). Standard-Limit 100 Spieler.
 - Der Host spielt selbst mit (eigene Wahl + Mehrheit; seine eigene Wahl ist die „Host-Wahl“). Er startet die 12 Fragen (feste Reihenfolge) und deckt auf. 60 s pro Frage (`VOTE_SECONDS`). Niemand kann das Spiel für alle beenden – es endet nach Frage 12.
 - Mehrere Spiele parallel möglich; Reload/Reconnect stellt die Sitzung wieder her.
@@ -25,7 +25,7 @@ Live-Voting-Website für das „SHIT Meeting“. Spieler voten pro Frage dreimal
 Bei Gleichstand der eigenen Wahl gibt es keine „Mehrheit“ (niemand bekommt Mehrheitspunkte). Nicht abgegebene Votes zählen nicht als „falsch“, unterbrechen aber die Streak.
 
 ## Deployment
-**Render** (Backend): New → Blueprint auf dieses Repo (`render.yaml`), Env `ADMIN_PASSWORD` setzen. URL z. B. `https://shit-game.onrender.com`.
+**Render** (Backend): New → Blueprint auf dieses Repo (`render.yaml`). URL z. B. `https://shit-game.onrender.com`.
 
 **Vercel** (Frontend): Repo importieren, Env `BACKEND_URL=https://<render-url>` setzen. `vercel.json` kümmert sich um Build/Output.
 
@@ -34,6 +34,6 @@ Hinweis: Render Free schläft nach Inaktivität ein – vor dem Meeting die Seit
 ## Lokal
 ```
 npm install
-npm start      # http://localhost:3000 (Passwort aus .env, sonst "host")
+npm start      # http://localhost:3000
 npm test
 ```

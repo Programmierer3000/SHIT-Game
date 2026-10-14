@@ -42,6 +42,8 @@ function newCode() {
   }
 }
 
+const optionKeys = (q) => 'ABCDEF'.slice(0, q && q.options ? q.options.length : 2).split('');
+
 function createRoom(code, hostToken) {
   const room = {
     code: code || newCode(),
@@ -88,6 +90,7 @@ function stateFor(room, socket) {
     serverNow: Date.now(),
     voteSeconds: VOTE_SECONDS,
     maxPoints: MAX_POINTS,
+    doubled: room.qIndex === questions.length - 1,
     playerCount: room.players.size,
     leaderboard: leaderboard(room),
     result: room.phase === 'reveal' ? room.result : null,
@@ -153,14 +156,18 @@ function reveal(room) {
   if (room.phase !== 'voting' && room.phase !== 'closed') return;
   clearTimer(room);
   const voters = [...room.players.values()].filter((p) => p.vote);
-  const own = { A: 0, B: 0 };
+  const own = {};
+  optionKeys(questions[room.qIndex]).forEach((k) => (own[k] = 0));
   voters.forEach((p) => (own[p.vote.own] += 1));
-  const majority = own.A === own.B ? null : own.A > own.B ? 'A' : 'B';
+  const top = Math.max(...Object.values(own));
+  const leaders = Object.keys(own).filter((k) => own[k] === top);
+  const majority = leaders.length === 1 ? leaders[0] : null;
+  const multiplier = room.qIndex === questions.length - 1 ? 2 : 1;
 
   for (const p of room.players.values()) {
     // The host cannot guess their own choice, so they only score on the majority.
     const vote = p.vote && p.isHost ? { ...p.vote, host: null } : p.vote;
-    const r = scorePlayer(p, vote, majority, room.hostChoice);
+    const r = scorePlayer(p, vote, majority, room.hostChoice, multiplier);
     p.score += r.points;
     p.streak = r.streak;
     p.wrongStreak = r.wrongStreak;
@@ -272,7 +279,8 @@ io.on('connection', (socket) => {
     if (!me) return done(ack, { error: 'Not joined.' });
     // The host may still vote after time is up so the round can never get stuck.
     if (room.phase !== 'voting' && !(me.isHost && room.phase === 'closed')) return done(ack, { error: 'Voting is closed.' });
-    const ok = (x) => x === 'A' || x === 'B';
+    const keys = optionKeys(questions[room.qIndex]);
+    const ok = (x) => keys.includes(x);
     if (!v || !ok(v.own) || !ok(v.majority) || (!me.isHost && !ok(v.host))) return done(ack, { error: 'Pick all choices.' });
     // The host's own choice is the choice everybody else has to guess.
     me.vote = { own: v.own, majority: v.majority, host: me.isHost ? v.own : v.host };

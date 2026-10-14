@@ -1,11 +1,11 @@
-const MAX_POINTS = 70;
+const MAX_POINTS = 80;
 const BASE = 2;
 const BOTH_BONUS = 1;
 const COMEBACK_BONUS = 3;
 const STREAK_AFTER = 3;
 
 // vote: { own, majority, host } | null. actualMajority is null on a tie (nobody is right).
-function scorePlayer(player, vote, actualMajority, hostChoice) {
+function scorePlayer(player, vote, actualMajority, hostChoice, multiplier = 1) {
   const out = { majorityRight: false, hostRight: false, points: 0, parts: [], streak: player.streak, wrongStreak: player.wrongStreak };
   if (!vote) {
     out.streak = 0;
@@ -33,6 +33,7 @@ function scorePlayer(player, vote, actualMajority, hostChoice) {
     }
   }
 
+  if (multiplier !== 1) out.parts.forEach((p) => { p.pts *= multiplier; });
   const raw = out.parts.reduce((s, p) => s + p.pts, 0);
   out.points = Math.min(raw, Math.max(0, MAX_POINTS - player.score));
   return out;

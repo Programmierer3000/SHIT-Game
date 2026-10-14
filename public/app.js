@@ -40,8 +40,9 @@
   const logo = '<div class="logo"><small>SHIT MEETING</small><h1>Would you rather…?</h1></div>';
 
   function optHtml(q, side, cls, isStatic) {
-    const txt = side === 'A' ? q.a : q.b;
-    const em = side === 'A' ? q.emojiA : q.emojiB;
+    const o = q.options ? q.options['ABCDEF'.indexOf(side)] : null;
+    const txt = o ? o.text : side === 'A' ? q.a : q.b;
+    const em = o ? o.emoji : side === 'A' ? q.emojiA : q.emojiB;
     return `<button class="opt ${side.toLowerCase()} ${cls || ''} ${isStatic ? 'static' : ''}" data-side="${side}">
       <span class="emoji">${em || ''}</span><span class="tag">${side}</span><span>${esc(txt)}</span></button>`;
   }
@@ -51,7 +52,7 @@
     const rows = state.leaderboard.slice(0, limit || 1000).map((p, i) => `
       <tr class="${p.id === meId ? 'me' : ''} ${p.connected ? '' : 'off'}">
         <td class="rank">${medals[i] && p.score > 0 ? medals[i] : i + 1}</td>
-        <td>${esc(p.name)}${p.score >= state.maxPoints ? '<span class="badge">🎁 70</span>' : ''}</td>
+        <td>${esc(p.name)}${p.score >= state.maxPoints ? '<span class="badge">🎁 ${state.maxPoints}</span>' : ''}</td>
         <td class="n">${p.score}</td></tr>`).join('');
     return `<table><thead><tr><th>#</th><th>Player</th><th class="n">Pts</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No players yet</td></tr>'}</tbody></table>`;
   }
@@ -65,9 +66,9 @@
 
   function resultHtml() {
     const r = state.result;
-    const max = Math.max(r.own.A, r.own.B, 1);
+    const max = Math.max(...Object.values(r.own), 1);
     const bar = (s) => `<div class="res"><b style="color:var(--${s.toLowerCase()})">${s}</b><div class="track"><div class="fill ${s.toLowerCase()}" style="width:${(r.own[s] / max) * 100}%"></div></div><span>${r.own[s]}</span></div>`;
-    return `<div class="panel">${bar('A')}${bar('B')}
+    return `<div class="panel">${Object.keys(r.own).map(bar).join('')}
       <div class="parts" style="margin-top:14px"><span class="chip">Majority: <b>${r.majority || 'tie'}</b></span><span class="chip">Host: <b>${r.host || '—'}</b></span></div></div>`;
   }
 
@@ -145,6 +146,7 @@
       const open = state.phase === 'voting' || isHost;
       const saved = me.vote;
       const pick = draft || saved || {};
+      if (state.doubled) html += '<p class="hint">🔥 Final round – double points!</p>';
       if (q.hint) html += `<p class="hint">${esc(q.hint)}</p>`;
       html += '<div class="timer" id="timer"></div><div class="bar"><div id="bar"></div></div>';
       const steps = isHost
@@ -153,7 +155,7 @@
       const keys = steps.map((s) => s[0]);
       steps.forEach(([k, n, label], i) => {
         html += `<div class="step ${i ? 'compact' : ''}" data-k="${k}"><h3><b>${n}</b>${label}</h3><div class="opts">
-          ${['A', 'B'].map((s) => optHtml(q, s, pick[k] === s ? 'sel' : '')).join('')}</div></div>`;
+          ${(q.options ? 'ABCDEF'.slice(0, q.options.length) : 'AB').split('').map((s) => optHtml(q, s, pick[k] === s ? 'sel' : '')).join('')}</div></div>`;
       });
       const ready = keys.every((k) => pick[k]);
       const changed = !saved || !draft || keys.some((k) => saved[k] !== draft[k]);
@@ -178,7 +180,7 @@
       if (isHost) html += `<button class="btn gold" id="next">${state.nextAvailable ? 'Next question ▶' : 'Show final ranking 🏆'}</button>`;
     } else {
       html += `<div class="panel"><h2 class="center">🏆 Final ranking</h2>${podiumHtml()}${boardHtml(me.id)}</div>
-        <p class="center">${me.score >= state.maxPoints ? '🎁 You reached 70 points – pick up your gift!' : 'Applause for the winner! 👏'}</p>`;
+        <p class="center">${me.score >= state.maxPoints ? `🎁 You reached ${state.maxPoints} points – pick up your gift!` : 'Applause for the winner! 👏'}</p>`;
     }
     if (!isHost) html += '<div class="footer"><button id="leave">Leave game</button></div>';
     app.innerHTML = html;

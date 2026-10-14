@@ -10,5 +10,5 @@
   { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
   { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
   { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
-  { "a": "Animal A", "b": "Animal B", "emojiA": "🐻", "emojiB": "🐍", "hint": "You are in a flat landscape without trees. You are being followed by one of these animals which wants to kill you. Which one are you choosing?" }
+  { "hint": "You are in a flat landscape without trees. You are being followed by one of these animals which wants to kill you. Which one are you choosing?", "options": [ { "emoji": "🦁", "text": "Lion" }, { "emoji": "🦛", "text": "Hippo" }, { "emoji": "🦅", "text": "Eagle" }, { "emoji": "🐺", "text": "Wolf" }, { "emoji": "🐝", "text": "Swarm of bees" }, { "emoji": "🦏", "text": "Rhino" } ] }
 ]

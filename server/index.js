@@ -178,6 +178,16 @@ function finish(room) {
 
 const cleanName = (n) => String(n || '').replace(/\s+/g, ' ').trim().slice(0, 20);
 
+// Brute-force protection for the host password: 5 failures per IP -> 15 min lockout.
+const failures = new Map(); // ip -> { count, until }
+const MAX_FAILS = 5;
+const LOCK_MS = 15 * 60 * 1000;
+const clientIp = (socket) => String(socket.handshake.headers['x-forwarded-for'] || socket.handshake.address).split(',')[0].trim();
+const sha = (s) => crypto.createHash('sha256').update(String(s)).digest();
+setInterval(() => {
+  for (const [ip, f] of failures) if (f.until < Date.now() && f.count < MAX_FAILS) failures.delete(ip);
+}, 10 * 60 * 1000).unref();
+
 io.on('connection', (socket) => {
   let room = null;
   const isHost = () => room && room.sockets.get(socket.id)?.role === 'host';
@@ -190,10 +200,21 @@ io.on('connection', (socket) => {
     r.sockets.set(socket.id, { role, token });
   };
 
-  socket.on('host:create', (password, ack) => {
-    const a = Buffer.from(String(password || ''));
-    const b = Buffer.from(ADMIN_PASSWORD);
-    if (!(a.length === b.length && crypto.timingSafeEqual(a, b))) return done(ack, { error: 'Wrong password.' });
+  socket.on('host:create', async (password, ack) => {
+    const ip = clientIp(socket);
+    const f = failures.get(ip) || { count: 0, until: 0 };
+    if (f.count >= MAX_FAILS && f.until > Date.now()) {
+      return done(ack, { error: `Too many attempts. Try again in ${Math.ceil((f.until - Date.now()) / 60000)} min.` });
+    }
+    if (f.count >= MAX_FAILS) { f.count = 0; }
+    if (!crypto.timingSafeEqual(sha(password), sha(ADMIN_PASSWORD))) {
+      f.count += 1;
+      f.until = Date.now() + LOCK_MS;
+      failures.set(ip, f);
+      await new Promise((r) => setTimeout(r, 800));
+      return done(ack, { error: 'Wrong password.' });
+    }
+    failures.delete(ip);
     if (rooms.size >= MAX_ROOMS) return done(ack, { error: 'Too many games running.' });
     const r = createRoom();
     attach(r, 'host', null);

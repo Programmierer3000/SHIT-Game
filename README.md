@@ -9,7 +9,7 @@ Live-Voting-Website für das „SHIT Meeting“. Spieler voten pro Frage dreimal
 ## Spielablauf
 - Auf der Startseite klickt der Host **Create game** (Passwort = `ADMIN_PASSWORD`) und bekommt einen 4-stelligen Code plus Einladungslink.
 - Spieler öffnen dieselbe Seite, geben Code + Namen ein (oder nutzen den Link `?code=XXXX`). Standard-Limit 100 Spieler.
-- Der Host startet die 12 Fragen (feste Reihenfolge), wählt seine Option (A/B) und deckt auf. 60 s pro Frage (`VOTE_SECONDS`).
+- Der Host spielt selbst mit (eigene Wahl + Mehrheit; seine eigene Wahl ist die „Host-Wahl“). Er startet die 12 Fragen (feste Reihenfolge) und deckt auf. 60 s pro Frage (`VOTE_SECONDS`). Niemand kann das Spiel für alle beenden – es endet nach Frage 12.
 - Mehrere Spiele parallel möglich; Reload/Reconnect stellt die Sitzung wieder her.
 
 ## Punkte

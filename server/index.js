@@ -23,6 +23,7 @@ const PORT = process.env.PORT || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'host';
 const VOTE_SECONDS = Number(process.env.VOTE_SECONDS || 60);
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 100);
+const MAX_ROOMS = 50;
 
 const app = express();
 const server = http.createServer(app);
@@ -31,55 +32,75 @@ const io = new Server(server, { cors: { origin: '*' } });
 app.get('/health', (_req, res) => res.json({ ok: true }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-const players = new Map(); // token -> player
-let game;
+const rooms = new Map(); // code -> room
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-function freshGame() {
-  return { phase: 'lobby', qIndex: -1, endsAt: null, hostChoice: null, result: null, timer: null };
+function newCode() {
+  for (;;) {
+    let c = '';
+    for (let i = 0; i < 4; i++) c += CODE_CHARS[crypto.randomInt(CODE_CHARS.length)];
+    if (!rooms.has(c)) return c;
+  }
 }
-game = freshGame();
 
-const adminSockets = new Set();
-const socketPlayer = new Map(); // socket.id -> token
+function createRoom() {
+  const room = {
+    code: newCode(),
+    hostToken: crypto.randomBytes(16).toString('hex'),
+    players: new Map(), // token -> player
+    sockets: new Map(), // socket.id -> { role, token }
+    phase: 'lobby',
+    qIndex: -1,
+    endsAt: null,
+    hostChoice: null,
+    result: null,
+    timer: null,
+    lastActive: Date.now(),
+  };
+  rooms.set(room.code, room);
+  return room;
+}
 
-function leaderboard() {
-  return [...players.values()]
+// Drop rooms that were idle for 6 hours.
+setInterval(() => {
+  for (const [code, r] of rooms) {
+    if (Date.now() - r.lastActive > 6 * 3600 * 1000) {
+      clearTimeout(r.timer);
+      rooms.delete(code);
+    }
+  }
+}, 10 * 60 * 1000).unref();
+
+function leaderboard(room) {
+  return [...room.players.values()]
     .map((p) => ({ id: p.id, name: p.name, score: p.score, connected: p.connected }))
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
 
-function question() {
-  return game.qIndex >= 0 ? questions[game.qIndex] : null;
-}
-
-function baseState() {
-  const inRound = game.phase === 'voting' || game.phase === 'closed';
-  return {
-    phase: game.phase,
-    qIndex: game.qIndex,
+function stateFor(room, socket) {
+  const info = room.sockets.get(socket.id);
+  const s = {
+    code: room.code,
+    phase: room.phase,
+    qIndex: room.qIndex,
     total: questions.length,
-    question: game.phase === 'lobby' || game.phase === 'finished' ? null : question(),
-    endsAt: game.phase === 'voting' ? game.endsAt : null,
+    question: room.qIndex >= 0 && room.phase !== 'lobby' && room.phase !== 'finished' ? questions[room.qIndex] : null,
+    endsAt: room.phase === 'voting' ? room.endsAt : null,
     serverNow: Date.now(),
-    maxPoints: MAX_POINTS,
     voteSeconds: VOTE_SECONDS,
-    playerCount: players.size,
-    leaderboard: leaderboard(),
-    result: game.phase === 'reveal' ? game.result.public : null,
-    votedCount: inRound || game.phase === 'reveal' ? [...players.values()].filter((p) => p.vote).length : 0,
+    maxPoints: MAX_POINTS,
+    playerCount: room.players.size,
+    leaderboard: leaderboard(room),
+    result: room.phase === 'reveal' ? room.result : null,
+    votedCount: [...room.players.values()].filter((p) => p.vote).length,
+    role: info ? info.role : null,
   };
-}
-
-function stateFor(socket) {
-  const s = baseState();
-  if (adminSockets.has(socket.id)) {
-    s.admin = true;
-    s.hostChoice = game.hostChoice;
-    s.nextAvailable = game.qIndex + 1 < questions.length;
-    s.players = [...players.values()].map((p) => ({ id: p.id, name: p.name, connected: p.connected, voted: !!p.vote, score: p.score }));
+  if (info && info.role === 'host') {
+    s.hostChoice = room.hostChoice;
+    s.nextAvailable = room.qIndex + 1 < questions.length;
+    s.players = [...room.players.values()].map((p) => ({ id: p.id, name: p.name, connected: p.connected, voted: !!p.vote, score: p.score }));
   }
-  const token = socketPlayer.get(socket.id);
-  const me = token && players.get(token);
+  const me = info && info.role === 'player' ? room.players.get(info.token) : null;
   if (me) {
     s.me = {
       id: me.id,
@@ -88,175 +109,194 @@ function stateFor(socket) {
       streak: me.streak,
       wrongStreak: me.wrongStreak,
       vote: me.vote,
-      last: game.phase === 'reveal' ? me.last : null,
-      rank: leaderboard().findIndex((p) => p.id === me.id) + 1,
+      last: room.phase === 'reveal' ? me.last : null,
+      rank: s.leaderboard.findIndex((p) => p.id === me.id) + 1,
     };
   }
   return s;
 }
 
-function broadcast() {
-  for (const socket of io.sockets.sockets.values()) socket.emit('state', stateFor(socket));
+function broadcast(room) {
+  room.lastActive = Date.now();
+  for (const id of room.sockets.keys()) {
+    const sock = io.sockets.sockets.get(id);
+    if (sock) sock.emit('state', stateFor(room, sock));
+  }
 }
 
-function clearTimer() {
-  if (game.timer) clearTimeout(game.timer);
-  game.timer = null;
+function clearTimer(room) {
+  if (room.timer) clearTimeout(room.timer);
+  room.timer = null;
 }
 
-function startQuestion() {
-  if (game.qIndex + 1 >= questions.length) return;
-  clearTimer();
-  for (const p of players.values()) {
+function startQuestion(room) {
+  if (room.qIndex + 1 >= questions.length) return;
+  clearTimer(room);
+  for (const p of room.players.values()) {
     p.vote = null;
     p.last = null;
   }
-  game.qIndex += 1;
-  game.phase = 'voting';
-  game.hostChoice = null;
-  game.result = null;
-  game.endsAt = Date.now() + VOTE_SECONDS * 1000;
-  game.timer = setTimeout(() => {
-    if (game.phase === 'voting') {
-      game.phase = 'closed';
-      game.endsAt = null;
-      broadcast();
+  room.qIndex += 1;
+  room.phase = 'voting';
+  room.hostChoice = null;
+  room.result = null;
+  room.endsAt = Date.now() + VOTE_SECONDS * 1000;
+  room.timer = setTimeout(() => {
+    if (room.phase === 'voting') {
+      room.phase = 'closed';
+      room.endsAt = null;
+      broadcast(room);
     }
   }, VOTE_SECONDS * 1000);
 }
 
-function reveal() {
-  if (game.phase !== 'voting' && game.phase !== 'closed') return;
-  clearTimer();
-  const voters = [...players.values()].filter((p) => p.vote);
+function reveal(room) {
+  if (room.phase !== 'voting' && room.phase !== 'closed') return;
+  clearTimer(room);
+  const voters = [...room.players.values()].filter((p) => p.vote);
   const own = { A: 0, B: 0 };
   voters.forEach((p) => (own[p.vote.own] += 1));
   const majority = own.A === own.B ? null : own.A > own.B ? 'A' : 'B';
 
-  for (const p of players.values()) {
-    const r = scorePlayer(p, p.vote, majority, game.hostChoice);
+  for (const p of room.players.values()) {
+    const r = scorePlayer(p, p.vote, majority, room.hostChoice);
     p.score += r.points;
     p.streak = r.streak;
     p.wrongStreak = r.wrongStreak;
     p.last = { voted: !!p.vote, points: r.points, parts: r.parts, majorityRight: r.majorityRight, hostRight: r.hostRight };
   }
-
-  game.phase = 'reveal';
-  game.endsAt = null;
-  game.result = { public: { own, majority, host: game.hostChoice, voters: voters.length } };
+  room.phase = 'reveal';
+  room.endsAt = null;
+  room.result = { own, majority, host: room.hostChoice, voters: voters.length };
 }
 
-function finish() {
-  clearTimer();
-  game.phase = 'finished';
-  game.endsAt = null;
+function finish(room) {
+  clearTimer(room);
+  room.phase = 'finished';
+  room.endsAt = null;
 }
 
-function cleanName(n) {
-  return String(n || '').replace(/\s+/g, ' ').trim().slice(0, 20);
-}
+const cleanName = (n) => String(n || '').replace(/\s+/g, ' ').trim().slice(0, 20);
 
 io.on('connection', (socket) => {
-  const requireAdmin = (fn) => (...args) => {
-    if (adminSockets.has(socket.id)) fn(...args);
+  let room = null;
+  const isHost = () => room && room.sockets.get(socket.id)?.role === 'host';
+  const host = (fn) => (...args) => { if (isHost()) fn(...args); };
+  const done = (ack, v) => (typeof ack === 'function' ? ack(v) : undefined);
+
+  const attach = (r, role, token) => {
+    room = r;
+    socket.join(r.code);
+    r.sockets.set(socket.id, { role, token });
   };
 
+  socket.on('host:create', (password, ack) => {
+    const a = Buffer.from(String(password || ''));
+    const b = Buffer.from(ADMIN_PASSWORD);
+    if (!(a.length === b.length && crypto.timingSafeEqual(a, b))) return done(ack, { error: 'Wrong password.' });
+    if (rooms.size >= MAX_ROOMS) return done(ack, { error: 'Too many games running.' });
+    const r = createRoom();
+    attach(r, 'host', null);
+    done(ack, { code: r.code, hostToken: r.hostToken });
+    broadcast(r);
+  });
+
+  socket.on('host:resume', (data, ack) => {
+    const r = data && rooms.get(String(data.code || '').toUpperCase());
+    if (!r || r.hostToken !== data.hostToken) return done(ack, { error: 'Game not found.' });
+    attach(r, 'host', null);
+    done(ack, { code: r.code });
+    broadcast(r);
+  });
+
   socket.on('join', (data, ack) => {
-    ack = typeof ack === 'function' ? ack : () => {};
-    const name = cleanName(data && data.name);
-    let player = data && data.token ? players.get(data.token) : null;
+    const r = data && rooms.get(String(data.code || '').toUpperCase().trim());
+    if (!r) return done(ack, { error: 'Game code not found.' });
+    let player = data.token ? r.players.get(data.token) : null;
     if (!player) {
-      if (!name) return ack({ error: 'Please enter a name.' });
-      if (players.size >= MAX_PLAYERS) return ack({ error: 'Game is full.' });
-      if ([...players.values()].some((p) => p.name.toLowerCase() === name.toLowerCase())) {
-        return ack({ error: 'Name already taken.' });
+      const name = cleanName(data.name);
+      if (!name) return done(ack, { error: 'Please enter a name.' });
+      if (r.players.size >= MAX_PLAYERS) return done(ack, { error: 'Game is full.' });
+      if ([...r.players.values()].some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+        return done(ack, { error: 'Name already taken.' });
       }
       const token = crypto.randomBytes(16).toString('hex');
       player = { id: crypto.randomBytes(4).toString('hex'), token, name, score: 0, streak: 0, wrongStreak: 0, vote: null, last: null, connected: true };
-      players.set(token, player);
+      r.players.set(token, player);
     }
     player.connected = true;
-    socketPlayer.set(socket.id, player.token);
-    ack({ token: player.token });
-    broadcast();
-  });
-
-  socket.on('spectate', () => {
-    socket.emit('state', stateFor(socket));
+    attach(r, 'player', player.token);
+    done(ack, { token: player.token, code: r.code });
+    broadcast(r);
   });
 
   socket.on('vote', (v, ack) => {
-    ack = typeof ack === 'function' ? ack : () => {};
-    const me = players.get(socketPlayer.get(socket.id));
-    if (!me) return ack({ error: 'Not joined.' });
-    if (game.phase !== 'voting') return ack({ error: 'Voting is closed.' });
+    const info = room && room.sockets.get(socket.id);
+    const me = info && info.role === 'player' && room.players.get(info.token);
+    if (!me) return done(ack, { error: 'Not joined.' });
+    if (room.phase !== 'voting') return done(ack, { error: 'Voting is closed.' });
     const ok = (x) => x === 'A' || x === 'B';
-    if (!v || !ok(v.own) || !ok(v.majority) || !ok(v.host)) return ack({ error: 'Pick all three.' });
+    if (!v || !ok(v.own) || !ok(v.majority) || !ok(v.host)) return done(ack, { error: 'Pick all three.' });
     me.vote = { own: v.own, majority: v.majority, host: v.host };
-    ack({ ok: true });
-    broadcast();
+    done(ack, { ok: true });
+    broadcast(room);
   });
 
-  socket.on('admin:auth', (password, ack) => {
-    ack = typeof ack === 'function' ? ack : () => {};
-    const a = Buffer.from(String(password));
-    const b = Buffer.from(ADMIN_PASSWORD);
-    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
-      adminSockets.add(socket.id);
-      ack({ ok: true });
-      socket.emit('state', stateFor(socket));
-    } else {
-      ack({ error: 'Wrong password.' });
-    }
-  });
-
-  socket.on('admin:next', requireAdmin(() => {
-    if (game.phase === 'voting' || game.phase === 'closed') return;
-    if (game.qIndex + 1 >= questions.length) finish();
-    else startQuestion();
-    broadcast();
+  socket.on('admin:next', host(() => {
+    if (room.phase === 'voting' || room.phase === 'closed') return;
+    if (room.qIndex + 1 >= questions.length) finish(room);
+    else startQuestion(room);
+    broadcast(room);
   }));
 
-  socket.on('admin:host', requireAdmin((choice) => {
-    if ((game.phase === 'voting' || game.phase === 'closed') && (choice === 'A' || choice === 'B')) {
-      game.hostChoice = choice;
-      broadcast();
+  socket.on('admin:host', host((choice) => {
+    if ((room.phase === 'voting' || room.phase === 'closed') && (choice === 'A' || choice === 'B')) {
+      room.hostChoice = choice;
+      broadcast(room);
     }
   }));
 
-  socket.on('admin:reveal', requireAdmin(() => {
-    reveal();
-    broadcast();
+  socket.on('admin:reveal', host(() => {
+    reveal(room);
+    broadcast(room);
   }));
 
-  socket.on('admin:finish', requireAdmin(() => {
-    finish();
-    broadcast();
+  socket.on('admin:finish', host(() => {
+    finish(room);
+    broadcast(room);
   }));
 
-  socket.on('admin:kick', requireAdmin((id) => {
-    for (const [token, p] of players) {
-      if (p.id === id) players.delete(token);
+  socket.on('admin:kick', host((id) => {
+    for (const [token, p] of room.players) {
+      if (p.id === id) {
+        room.players.delete(token);
+        for (const [sid, info] of room.sockets) {
+          if (info.token === token) {
+            const s = io.sockets.sockets.get(sid);
+            room.sockets.delete(sid);
+            if (s) s.emit('kicked');
+          }
+        }
+      }
     }
-    broadcast();
+    broadcast(room);
   }));
 
-  socket.on('admin:reset', requireAdmin(() => {
-    clearTimer();
-    players.clear();
-    socketPlayer.clear();
-    game = freshGame();
-    io.emit('reset');
-    broadcast();
+  socket.on('admin:close', host(() => {
+    clearTimer(room);
+    io.to(room.code).emit('closed');
+    rooms.delete(room.code);
   }));
 
   socket.on('disconnect', () => {
-    adminSockets.delete(socket.id);
-    const token = socketPlayer.get(socket.id);
-    socketPlayer.delete(socket.id);
-    const p = token && players.get(token);
-    if (p && ![...socketPlayer.values()].includes(token)) p.connected = false;
-    broadcast();
+    if (!room) return;
+    const info = room.sockets.get(socket.id);
+    room.sockets.delete(socket.id);
+    if (info && info.role === 'player') {
+      const p = room.players.get(info.token);
+      if (p && ![...room.sockets.values()].some((i) => i.token === info.token)) p.connected = false;
+    }
+    if (rooms.has(room.code)) broadcast(room);
   });
 });
 

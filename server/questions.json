@@ -10,5 +10,8 @@
   { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
   { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
   { "a": "Team A", "b": "Team B", "emojiA": "🛡️", "emojiB": "⚔️", "hint": "One team protects you; one is attacking you. Which one are you choosing?" },
-  { "hint": "You are in a flat landscape without trees. You are being followed by one of these animals which wants to kill you. Which one are you choosing?", "options": [ { "emoji": "🦁", "text": "Lion" }, { "emoji": "🦛", "text": "Hippo" }, { "emoji": "🦅", "text": "Eagle" }, { "emoji": "🐺", "text": "Wolf" }, { "emoji": "🐝", "text": "Swarm of bees" }, { "emoji": "🦏", "text": "Rhino" } ] }
+  { "hint": "You are in a flat landscape without trees. You are being followed by one of these animals which wants to kill you. Which one are you choosing?", "options": [ { "emoji": "🦁", "text": "Lion" }, { "emoji": "🦛", "text": "Hippo" }, { "emoji": "🦅", "text": "Eagle" }, { "emoji": "🐺", "text": "Wolf" }, { "emoji": "🐝", "text": "Swarm of bees" }, { "emoji": "🦏", "text": "Rhino" } ] },
+  { "a": "Fight a horse-sized mouse", "b": "Fight 10 mouse-sized horses", "emojiA": "🐭", "emojiB": "🐴" },
+  { "a": "Have an army of 100 frogs that does what you want, but once a month they attack you for the hard work", "b": "Have 10 snakes that tell you if someone is lying, but they sleep with you every night", "emojiA": "🐸", "emojiB": "🐍" },
+  { "a": "Live on an island with -5 °C every day, but once a year it gets up to 45 °C for one day", "b": "Live on an island with 40 °C every day, but once a year it drops to -10 °C for one day", "emojiA": "🥶", "emojiB": "🥵" }
 ]

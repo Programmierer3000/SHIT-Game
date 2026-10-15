@@ -21,7 +21,7 @@ assert.strictEqual(r.points, 6);
 r = scorePlayer(p({ streak: 2 }), v('A', 'A'), 'A', 'A');
 assert.strictEqual(r.points, 5);
 
-r = scorePlayer(p({ score: 78 }), v('A', 'A'), 'A', 'A');
+r = scorePlayer(p({ score: 88 }), v('A', 'A'), 'A', 'A');
 assert.strictEqual(r.points, 2);
 
 r = scorePlayer(p(), v('A', 'A'), 'A', 'A', 2);

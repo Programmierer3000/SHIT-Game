@@ -1,4 +1,4 @@
-const MAX_POINTS = 80;
+const MAX_POINTS = 90;
 const BASE = 2;
 const BOTH_BONUS = 1;
 const COMEBACK_BONUS = 3;

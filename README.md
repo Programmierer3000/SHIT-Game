@@ -1,6 +1,6 @@
 # SHIT-Game – Would you rather…?
 
-Live-Voting-Website für das „SHIT Meeting“. Spieler voten pro Frage dreimal (eigene Wahl, Mehrheit, Host), die Seite berechnet die Punkte (max. 80; letzte Runde doppelt).
+Live-Voting-Website für das „SHIT Meeting“. Spieler voten pro Frage dreimal (eigene Wahl, Mehrheit, Host), die Seite berechnet die Punkte (max. 90; letzte Runde doppelt).
 
 - **Frontend:** statisch in [public/](public) (Vercel)
 - **Backend:** Node + Socket.IO in [server/](server) (Render). Der Server liefert `public/` auch selbst aus, Render allein reicht also zum Spielen.
@@ -9,7 +9,7 @@ Live-Voting-Website für das „SHIT Meeting“. Spieler voten pro Frage dreimal
 ## Spielablauf
 - Auf der Startseite klickt der Host **Create game** (kein Passwort n�tig, jeder darf hosten; max. 5 neue Spiele pro IP / 10 Min.) und bekommt einen 4-stelligen Code plus Einladungslink.
 - Spieler öffnen dieselbe Seite, geben Code + Namen ein (oder nutzen den Link `?code=XXXX`). Standard-Limit 100 Spieler.
-- Der Host spielt selbst mit (eigene Wahl + Mehrheit; seine eigene Wahl ist die „Host-Wahl“). Er startet die 12 Fragen (feste Reihenfolge) und deckt auf. 60 s pro Frage (`VOTE_SECONDS`). Niemand kann das Spiel für alle beenden – es endet nach Frage 12.
+- Der Host spielt selbst mit (eigene Wahl + Mehrheit; seine eigene Wahl ist die „Host-Wahl“). Er startet die 15 Fragen (feste Reihenfolge) und deckt auf. 60 s pro Frage (`VOTE_SECONDS`). Niemand kann das Spiel für alle beenden – es endet nach Frage 15 (die letzte Runde zählt doppelt).
 - Mehrere Spiele parallel möglich; Reload/Reconnect stellt die Sitzung wieder her.
 
 ## Punkte
@@ -20,7 +20,7 @@ Live-Voting-Website für das „SHIT Meeting“. Spieler voten pro Frage dreimal
 | Beides richtig | +1 |
 | Comeback (≥1 richtig nach 3 komplett falschen Fragen) | +3 |
 | Streak (ab der 4. komplett richtigen Frage in Folge) | +1 je weitere Frage |
-| Maximum | 80 (Geschenk 🎁) |
+| Maximum | 90 (Geschenk 🎁) |
 
 Bei Gleichstand der eigenen Wahl gibt es keine „Mehrheit“ (niemand bekommt Mehrheitspunkte). Nicht abgegebene Votes zählen nicht als „falsch“, unterbrechen aber die Streak.
 
